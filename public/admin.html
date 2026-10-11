@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <title>Кабинет репетитора — расписание</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { background: var(--cream); }
+    .panel { max-width: 980px; margin: 30px auto; padding: 0 20px; }
+    .login { max-width: 380px; margin: 12vh auto; }
+    .toolbar { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; justify-content: space-between; margin-bottom: 22px; }
+    .dayrow { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 16px 18px; border-bottom: 1px solid var(--line); align-items: start; }
+    .dayrow:last-child { border-bottom: 0; }
+    .dayrow.weekend .dname { color: #b07a00; }
+    .dayrow.today { background: var(--yellow-soft); }
+    .dname { font-family: var(--head); font-size: 15px; color: var(--green-900); }
+    .dname small { display: block; font-family: var(--font); font-size: 13px; color: var(--muted); font-weight: 600; }
+    .ivs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .iv { display: inline-flex; align-items: center; gap: 4px; background: #eef7e8; border: 2px solid var(--lime); border-radius: 10px; padding: 4px 6px; }
+    .iv input { padding: 4px 6px; border-width: 1px; font-size: 14px; width: 92px; }
+    .iv button { border: 0; background: none; cursor: pointer; color: #8a2a17; font-size: 18px; line-height: 1; }
+    .off { color: var(--muted); font-size: 14px; font-style: italic; }
+    .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .mini { border: 1px solid var(--line); background: var(--white); border-radius: 8px; padding: 6px 10px; font: 600 13px var(--font); cursor: pointer; color: var(--green-900); }
+    .mini:hover { border-color: var(--green-500); }
+    .mini.save { background: var(--green-700); color: #fff; border-color: var(--green-700); }
+    .mini.save.dirty { background: var(--yellow); color: var(--green-900); border-color: var(--yellow); }
+    .bk { margin-top: 8px; display: grid; gap: 6px; }
+    .bk div { background: var(--white); border-left: 4px solid var(--yellow); border-radius: 6px; padding: 6px 10px; font-size: 14px; display: flex; justify-content: space-between; gap: 10px; }
+    .bk button { border: 0; background: none; color: #8a2a17; cursor: pointer; font-weight: 700; }
+    .legend { font-size: 13px; color: var(--muted); }
+    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--green-900); color: #fff; padding: 12px 20px; border-radius: 999px; font-weight: 700; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    #toast.show { opacity: 1; }
+    @media (max-width: 700px) {
+      .panel { margin: 14px auto; padding: 0 12px calc(30px + env(safe-area-inset-bottom)); }
+      .dayrow { grid-template-columns: 1fr; gap: 8px; padding: 14px; }
+      .mini { padding: 9px 11px; font-size: 13px; }
+      .iv input { width: 118px; font-size: 16px; padding: 6px; }
+      .bk div { flex-direction: column; }
+      .toolbar label { width: 100%; }
+    }
+    #toast { bottom: calc(20px + env(safe-area-inset-bottom)); }
+  </style>
+</head>
+<body>
+
+<div id="loginBox" class="login card">
+  <h2 style="font-size:24px">Кабинет репетитора</h2>
+  <form id="loginForm" class="bform">
+    <label>Пароль<input type="password" id="pwd" required autofocus></label>
+    <button class="btn" type="submit">Войти</button>
+    <div id="loginMsg"></div>
+  </form>
+</div>
+
+<div id="app" class="panel" hidden>
+  <div class="toolbar">
+    <div>
+      <a class="logo" href="/" target="_blank"><span class="el y"><small>9</small><b>Хи</b></span> Расписание и записи</a>
+      <p class="legend">Задайте свободные окна на каждый день — на сайте они превратятся в слоты для записи. Пустой день = выходной.</p>
+    </div>
+    <label style="min-width:170px">Длительность урока
+      <select id="lessonLen"><option>45</option><option>60</option><option>90</option><option>120</option></select>
+    </label>
+  </div>
+
+  <div class="card" style="padding:0;overflow:hidden" id="daysList"></div>
+
+  <h2 style="font-size:24px;margin-top:36px">Все предстоящие записи</h2>
+  <div class="card" id="allBookings"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const WD = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
+const parse = (s) => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
+const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const tg = window.Telegram?.WebApp;
+const inTG = Boolean(tg && tg.initData);
+if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('#12402a'); } catch {} }
+const ask = (text) => new Promise((ok) => inTG ? tg.showConfirm(text, ok) : ok(confirm(text)));
+
+let pwd = '';
+try { pwd = sessionStorage.getItem('adminPwd') || ''; } catch {}
+let state = null;        // данные с сервера
+let draft = {};          // date -> [{start,end}] (редактируемые копии)
+const dirty = new Set(); // несохранённые дни
+
+function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2200); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-password': pwd, 'x-tg-init-data': tg?.initData || '', ...(opts.headers || {}) } });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401) { logout(); throw new Error(inTG ? 'Ваш Telegram-аккаунт не указан как репетитор (ADMIN_IDS)' : 'Неверный пароль'); }
+  if (!r.ok) throw new Error(body.error || 'Ошибка');
+  return body;
+}
+
+function logout() { try { sessionStorage.removeItem('adminPwd'); } catch {} $('app').hidden = true; $('loginBox').hidden = false; }
+
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  pwd = $('pwd').value;
+  try { await load(); try { sessionStorage.setItem('adminPwd', pwd); } catch {} }
+  catch (err) { $('loginMsg').innerHTML = `<div class="msg err">${err.message}</div>`; }
+};
+
+async function load() {
+  state = await api('/api/admin/data');
+  draft = {};
+  for (const d of state.dates) draft[d] = (state.availability[d] || []).map((x) => ({ ...x }));
+  dirty.clear();
+  $('lessonLen').value = state.settings.lessonMinutes;
+  $('loginBox').hidden = true; $('app').hidden = false;
+  render();
+}
+
+function render() {
+  const today = fmt(new Date());
+  const byDate = {};
+  for (const b of state.bookings) (byDate[b.date] ||= []).push(b);
+
+  $('daysList').innerHTML = state.dates.map((date) => {
+    const d = parse(date), wd = d.getDay();
+    const ivs = draft[date];
+    const bks = byDate[date] || [];
+    return `<div class="dayrow ${wd === 0 || wd === 6 ? 'weekend' : ''} ${date === today ? 'today' : ''}" data-date="${date}">
+      <div class="dname">${d.getDate()} ${MONTHS[d.getMonth()]}<small>${WD[wd]}${date === today ? ' · сегодня' : ''}</small></div>
+      <div>
+        <div class="ivs">
+          ${ivs.length ? ivs.map((iv, i) => `<span class="iv">
+              <input type="time" step="900" value="${iv.start}" data-i="${i}" data-k="start"> –
+              <input type="time" step="900" value="${iv.end}" data-i="${i}" data-k="end">
+              <button title="Удалить окно" data-del="${i}">×</button></span>`).join('')
+            : '<span class="off">Выходной — записи нет</span>'}
+        </div>
+        <div class="acts">
+          <button class="mini" data-act="add">+ окно</button>
+          <button class="mini" data-act="full">Весь день (9–21)</button>
+          <button class="mini" data-act="eve">После школы (15–20)</button>
+          <button class="mini" data-act="prev">Как неделю назад</button>
+          <button class="mini" data-act="off">Выходной</button>
+          <button class="mini save ${dirty.has(date) ? 'dirty' : ''}" data-act="save">${dirty.has(date) ? 'Сохранить ●' : 'Сохранено'}</button>
+        </div>
+        ${bks.length ? `<div class="bk">${bks.map((b) => `<div><span><b>${b.time}</b> — ${esc(b.name)}${contact(b)}${b.comment ? ` · <i>${esc(b.comment)}</i>` : ''}</span><button data-cancel="${b.id}">отменить</button></div>`).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  $('allBookings').innerHTML = state.bookings.length
+    ? `<div class="bk">${state.bookings.map((b) => { const d = parse(b.date); return `<div><span><b>${d.getDate()} ${MONTHS[d.getMonth()]}, ${b.time}</b> — ${esc(b.name)}${contact(b)}${b.comment ? ` · <i>${esc(b.comment)}</i>` : ''}</span><button data-cancel="${b.id}">отменить</button></div>`; }).join('')}</div>`
+    : '<p class="hint" style="margin:0">Пока никто не записался.</p>';
+}
+
+function contact(b) {
+  const out = [];
+  if (b.phone) out.push(esc(b.phone));
+  if (b.tg?.username) out.push(`<a href="https://t.me/${esc(b.tg.username)}" target="_blank">@${esc(b.tg.username)}</a>`);
+  else if (b.tg?.id) out.push(`<a href="tg://user?id=${Number(b.tg.id)}">Telegram</a>`);
+  return out.length ? ', ' + out.join(', ') : '';
+}
+
+function mark(date) { dirty.add(date); render(); }
+
+$('daysList').addEventListener('input', (e) => {
+  const inp = e.target.closest('input[data-i]'); if (!inp) return;
+  const date = inp.closest('.dayrow').dataset.date;
+  draft[date][inp.dataset.i][inp.dataset.k] = inp.value;
+  dirty.add(date);
+  const btn = inp.closest('.dayrow').querySelector('[data-act=save]');
+  btn.classList.add('dirty'); btn.textContent = 'Сохранить ●';
+});
+
+document.addEventListener('click', async (e) => {
+  const cancel = e.target.closest('[data-cancel]');
+  if (cancel) {
+    if (!(await ask('Отменить эту запись? Ученик получит уведомление, слот снова станет свободным.'))) return;
+    try { await api('/api/admin/booking/' + cancel.dataset.cancel, { method: 'DELETE' }); toast('Запись отменена'); await reloadKeepDrafts(); }
+    catch (err) { toast(err.message); }
+    return;
+  }
+  const row = e.target.closest('.dayrow'); if (!row) return;
+  const date = row.dataset.date;
+  const del = e.target.closest('[data-del]');
+  if (del) { draft[date].splice(Number(del.dataset.del), 1); return mark(date); }
+  const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
+
+  if (act === 'add') {
+    const last = draft[date][draft[date].length - 1];
+    draft[date].push(last ? { start: last.end, end: addH(last.end, 2) } : { start: '15:00', end: '18:00' });
+    return mark(date);
+  }
+  if (act === 'full') { draft[date] = [{ start: '09:00', end: '21:00' }]; return mark(date); }
+  if (act === 'eve')  { draft[date] = [{ start: '15:00', end: '20:00' }]; return mark(date); }
+  if (act === 'off')  { draft[date] = []; return mark(date); }
+  if (act === 'prev') {
+    const p = parse(date); p.setDate(p.getDate() - 7);
+    const src = draft[fmt(p)] ?? state.availability[fmt(p)] ?? [];
+    draft[date] = src.map((x) => ({ ...x }));
+    if (!src.length) toast('Неделю назад этот день был выходным');
+    return mark(date);
+  }
+  if (act === 'save') {
+    try {
+      await api('/api/admin/day', { method: 'PUT', body: JSON.stringify({ date, intervals: draft[date] }) });
+      state.availability[date] = draft[date].map((x) => ({ ...x }));
+      dirty.delete(date); render(); toast('Расписание сохранено');
+    } catch (err) { toast(err.message); }
+  }
+});
+
+function addH(t, h) { let [hh, mm] = t.split(':').map(Number); hh = Math.min(hh + h, 23); return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`; }
+
+async function reloadKeepDrafts() {
+  const keep = {}; for (const d of dirty) keep[d] = draft[d];
+  state = await api('/api/admin/data');
+  for (const d of state.dates) draft[d] = keep[d] ?? (state.availability[d] || []).map((x) => ({ ...x }));
+  render();
+}
+
+$('lessonLen').onchange = async (e) => {
+  try { await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ lessonMinutes: Number(e.target.value) }) }); toast(`Длительность урока: ${e.target.value} мин`); }
+  catch (err) { toast(err.message); }
+};
+
+window.addEventListener('beforeunload', (e) => { if (dirty.size) { e.preventDefault(); e.returnValue = ''; } });
+
+if (inTG || pwd) load().catch((err) => { logout(); $('loginMsg').innerHTML = `<div class="msg err">${err.message}</div>`; });
+</script>
+</body>
+</html>

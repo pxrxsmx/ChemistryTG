@@ -1,0 +1,14 @@
+{
+  "name": "chem-tutor-bot",
+  "version": "1.0.0",
+  "description": "Telegram-бот и мини-приложение записи к репетитору по химии",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
